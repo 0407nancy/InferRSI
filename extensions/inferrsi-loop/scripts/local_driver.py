@@ -3,6 +3,7 @@ import argparse
 import base64
 import gzip
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -10,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from inferrsi_loop import adapter, local_tests, planner, knowledge
+from inferrsi_loop import model_selection, adapter, local_tests, planner, knowledge
 from inferrsi_loop.recovery import archive_incomplete
 from inferrsi_loop.common import LoopError, lock, manifest, read, safe_child, write
 
@@ -28,14 +29,14 @@ def main():
     p.add_argument('--expected-user', default='<REMOTE_USER>')
     p.add_argument('--lark', default='lark-cli')
     p.add_argument("--codex", default="/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
-    p.add_argument("--model", default="gpt-6-astra")
-    p.add_argument("--effort", default="medium")
+    p.add_argument("--model")
+    p.add_argument("--effort")
     p.add_argument("--wait-for-devices", action="store_true")
     a = p.parse_args()
     a.root = a.root.resolve()
     a.root.mkdir(parents=True, exist_ok=True)
     settings = {"name": a.model, "effort": a.effort, "codex": a.codex,
-                "codex_home": str(Path.home() / ".codex"), "timeout_seconds": 600}
+                "codex_home": os.environ.get("CODEX_HOME", str(Path.home() / ".codex")), "timeout_seconds": 600}
     def remote(action, **fields):
         command = ["docker", "exec", "-i", '-e', 'PYTHONPATH=' + a.remote_package.rstrip('/') + '/src',
                    a.container, a.remote_python, "-m", "inferrsi_loop.ssh_step"]
@@ -74,10 +75,15 @@ raise SystemExit(status)
         if identity.stdout.strip() != a.expected_user:
             raise LoopError("SSH did not return the personal Linux user")
         setup = remote('configuration')
+        parent = a.root/'parent-session.json'
+        session = read(parent) if parent.exists() else model_selection.session_context()
+        selected = model_selection.retain(a.root, {'model':a.model,'effort':a.effort}, setup.get('model',{}), session)
+        a.model, a.effort = selected['model'], selected['effort']
+        settings.update(name=a.model,effort=a.effort)
         if not setup['initialized']:
             snapshots = knowledge.fetch_documents(setup['knowledge_sources'], a.lark)
             write(a.root / 'knowledge-documents.json', snapshots)
-            remote('initialize', documents=snapshots)
+            remote('initialize', documents=snapshots, model_selection={'name':a.model,'effort':a.effort})
         while True:
             result = remote("advance")
             write(a.root / "remote-status.json", result)

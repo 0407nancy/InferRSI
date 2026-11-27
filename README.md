@@ -1,4 +1,4 @@
-> **InferRSI loop v1** — 保留旧版外层探索与恢复流程。
+> **InferRSI loop v2** — 原生 campaign 管理实验，包含 blocked 恢复及消融修复。
 > 项目架构、配置模板、安装与 Codex prompt 示例见 [扩展 README](extensions/inferrsi-loop/README.md)。
 > 此分支用于个人 fork 中的版本留存；CPU 测试不代表 H3/P800 性能验收。
 

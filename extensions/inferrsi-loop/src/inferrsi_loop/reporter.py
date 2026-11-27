@@ -42,53 +42,77 @@ def attempt_reason(payload):
     return '；'.join(f"第{x['round']}项：{x.get('rationale') or x['hypothesis']}" for x in items) or '原记录未提供策略依据，待补充。'
 
 
+def row_reasons(payload):
+    root = ET.fromstring('<fragment>' + render(payload) + '</fragment>')
+    return {''.join(row[0].itertext()): ''.join(row[1].itertext())
+            for row in root.findall('.//tbody/tr') if len(row) == 4}
+
+
 def render(payload):
-    """One sibling h2 per run; metrics remain scoped to their original experiment."""
+    """Four columns, sibling run sections, and links to complete retained evidence."""
     report = payload.get('report', {})
     summary = report.get('summary', payload)
     marker = 'InferRSI-loop:' + payload['run_id']
     started = report.get('started_at')
     when = datetime.fromtimestamp(started, ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S') if started is not None else '时间未记录'
-    items = report.get('accepted', []) + report.get('validated_pending_review', []) + report.get('other_candidates', [])
     notes = report.get('report_notes', {})
-    title = notes.get('title', '推理优化实验')
-    parts = ['<h2>' + escape(f'{when}｜{title}｜{marker}') + '</h2>']
+    condition = 'on' if report.get('knowledge_enabled', summary.get('knowledge_enabled', True)) else 'off'
+    parts = ['<h2>' + escape(f'{when}｜{payload["run_id"]}｜Knowledge {condition}｜{marker}') + '</h2>']
     def paragraph(text):
         parts.append('<p>' + escape(str(text)) + '</p>')
-    paragraph('开始时间：' + when + '（Asia/Shanghai）；run ID：' + payload['run_id'])
-    explanation = notes.get('description') or '；'.join(x['hypothesis'] for x in items) or report.get('goal') or payload.get('reason', '未记录优化说明')
-    paragraph('优化说明：' + explanation)
-    paragraph('尝试原因：' + attempt_reason(payload))
-    paragraph(f"结果概述：状态={payload['status']}；候选数={summary.get('candidate_count', '未记录')}；有效性能实验数={summary.get('effective_experiments', '未记录')}；局部达标={len(report.get('candidate_optimizations', []))}；协议修复={summary.get('protocol_repairs', '未记录')}。")
-    rows = []
-    evidence = []
+    paragraph('状态：' + payload['status'] + f"；候选 {summary.get('candidate_count', 0)}；有效实验 {summary.get('effective_experiments', 0)}")
+    rows, evidence = [], []
     status_names = {'candidate_optimization':'局部候选', 'rejected':'未达标', 'pending_numerical_review':'数值待确认', 'inconclusive':'评测未完成', 'unmeasured_missing_evidence_or_protocol':'未测量', 'awaiting_measurement':'未测量', 'accepted':'已验收', 'validated_pending_human_review':'待人工确认'}
-    for item in items:
-        decisions = item.get('decisions', {})
-        label = notes.get('items', {}).get(str(item['round']), item['hypothesis'])
-        for stage, decision in (decisions.items() or [('screen', {})]):
+    for item in report.get('accepted', []) + report.get('validated_pending_review', []) + report.get('other_candidates', []):
+        for stage, decision in (item.get('decisions', {}).items() or [('screen', {})]):
             assessment = decision.get('assessment', {})
             metric = assessment.get('metrics')
-            timing = f"{metric['baseline']:.4g} → {metric['candidate']:.4g} {metric['unit']}" if metric else '未测量'
-            gain = f"{assessment['improvement_pct']:.2f}%" if metric and assessment.get('improvement_pct') is not None else '—'
-            quality = '通过' if assessment.get('quality_passed') is True else '失败' if assessment.get('quality_passed') is False else '待确认' if decision.get('reason') == 'needs_numerical_review' else '未完成'
-            reason = decision.get('reason') or item.get('feedback', {}).get('assessment', {}).get('reason') or item.get('feedback', {}).get('reason', '')
+            timing = f"{metric['baseline']:.4g} → {metric['candidate']:.4g} {metric['unit']}；收益 {assessment['improvement_pct']:.2f}%" if metric and assessment.get('improvement_pct') is not None else '未测量'
+            quality = '通过' if assessment.get('quality_passed') is True else '失败' if assessment.get('quality_passed') is False else '未完成'
+            label = f"{item['round']}/{stage} " + notes.get('items', {}).get(str(item['round']), item['hypothesis'])
+            rationale = notes.get('row_reasons', {}).get(label) or notes.get('attempt_reason') or item.get('rationale') or '原记录未提供依据'
+            reason = decision.get('reason') or item.get('feedback', {}).get('reason', '')
             conclusion = status_names.get(item['status'], item['status'])
-            rows.append([f"{item['round']}/{stage}", label, timing, gain, quality, conclusion])
-            if reason: evidence.append(f"第{item['round']}项/{stage}：{reason}")
-            if decision.get('evidence'): evidence.append('评测结果：' + decision['evidence'])
-            if assessment.get('scope'): evidence.append('测量范围：' + assessment['scope'])
-        if item.get('patch'): evidence.append('补丁：' + item['patch'])
+            if not metric and reason:
+                conclusion += '：' + reason
+            if decision.get('evidence_verified') is False:
+                conclusion = '证据不完整：' + reason
+            if decision.get('cases'):
+                for case in decision['cases']:
+                    case_label = label + ' [' + '/'.join(case.get('tasks',[])) + ':' + case['id'] + ']'
+                    means = case.get('means')
+                    value = f"{means['baseline']:.4g} → {means['candidate']:.4g} {metric['unit']}" if means and metric else '数值边界用例/未测量'
+                    if means and metric and means['baseline'] > 0 and means['candidate'] > 0:
+                        gain = (1-means['candidate']/means['baseline'])*100 if metric['direction']=='minimize' else (means['candidate']/means['baseline']-1)*100
+                        value += f'；收益 {gain:.2f}%'
+                    statuses = [x.get('numerical_status') for x in case.get('numerical',{}).values()]
+                    case_quality = '通过' if len(statuses)==2 and all(x=='pass' for x in statuses) else '失败/未完成'
+                    rows.append([case_label, notes.get('row_reasons',{}).get(case_label,rationale), value+'；数值：'+case_quality, conclusion+'（汇总判定）'])
+            else:
+                rows.append([label, rationale, timing + '；数值：' + quality, conclusion])
+            if decision.get('evidence'): evidence.append(decision['evidence'])
+        if item.get('patch'): evidence.append(item['patch'])
     for item in report.get('ablation', {}).get('rows', []):
         a = item.get('assessment', {}); m = a.get('metrics')
-        rows.append([item['stage'], f"{item['reference']} → {item['candidate']}", f"{m['baseline']:.4g} → {m['candidate']:.4g} {m['unit']}" if m else '未测量', f"{a['improvement_pct']:.2f}%" if m else '—', '见原始验证结果', item['verdict']])
+        label = f"消融/{item['stage']} {item['reference']} → {item['candidate']}"
+        result = f"{m['baseline']:.4g} → {m['candidate']:.4g} {m['unit']}" if m else '未测量'
+        if item.get('removed') and item.get('measured'):
+            conclusion = f"该项组合内贡献 {item['marginal_gain_pct']:.2f}%"
+        else:
+            conclusion = item['verdict']
+        rows.append([label, notes.get('row_reasons',{}).get(label, '验证组合收益及各项贡献'), result, conclusion])
+        if item.get('decision'): evidence.append(item['decision'])
     def cells(values, tag):
         return '<tr>' + ''.join(f'<{tag}><p>{escape(str(v))}</p></{tag}>' for v in values) + '</tr>'
     if rows:
-        parts.append('<table><thead>' + cells(['优化项/阶段','具体改动','基线→候选耗时','耗时下降','数值验证','结论'], 'th') + '</thead><tbody>' + ''.join(cells(row, 'td') for row in rows) + '</tbody></table>')
-    for text in evidence: paragraph(text)
-    if report.get('run'): paragraph('结果文件：' + report['run'] + '/results.json')
-    paragraph(notes.get('limitations', '局部结果仅覆盖所列样本与模块；不代表真实请求、TP 通信或 E2E 收益。数值通过也不等于完整模型质量通过。'))
+        parts.append('<table><thead>' + cells(['优化项','尝试原因','实测结果','结论'], 'th') + '</thead><tbody>' + ''.join(cells(row, 'td') for row in rows) + '</tbody></table>')
+    else:
+        paragraph('尚无完成的候选；状态：' + payload['status'])
+    if notes.get('attempt_reason'):
+        paragraph('尝试原因：' + notes['attempt_reason'])  # Preserve a manually supplemented legacy paragraph.
+    if report.get('run'): evidence.insert(0, report['run'] + '/results.json')
+    if evidence: paragraph('证据：' + '；'.join(dict.fromkeys(evidence)))
+    paragraph('局部测量不代表真实请求或整模型收益；short E2E 不等于官方完整请求验收。')
     paragraph('记录结束：' + marker + ':end')
     return ''.join(parts)
 
@@ -138,6 +162,17 @@ def sync(run, document, binary="lark-cli"):
             notes['attempt_reason'] = reasons[0]
             write(run / 'report-notes.json', notes)
             write(run / 'sync-outbox.json', payload)
+        # Preserve manually edited cells independently of generated proposal rationale.
+        prior = previous_receipt.get('row_reasons', {})
+        notes = payload.setdefault('report', {}).setdefault('report_notes', {})
+        for row in section.findall('.//tbody/tr'):
+            if len(row) != 4:
+                continue
+            label, reason = [''.join(cell.itertext()) for cell in list(row)[:2]]
+            if label not in prior or reason != prior[label] or label in notes.get('row_reasons', {}):
+                notes.setdefault('row_reasons', {})[label] = reason
+        write(run / 'report-notes.json', notes)
+        write(run / 'sync-outbox.json', payload)
         args = ['+update','--command','block_replace','--start-block-id',headings[0].get('id'),'--end-block-id',ends[0].get('id')]
     elif old:
         # Migrate an old single-paragraph report, including its manually added heading.
@@ -147,7 +182,7 @@ def sync(run, document, binary="lark-cli"):
         args = ['+update','--command','block_replace']
         args += ['--start-block-id',previous[0].get('id'),'--end-block-id',old[0].get('id')] if previous else ['--block-id',old[0].get('id')]
     content = render(payload)
-    signature = digest({'format': 3, 'document': document, 'content': content})
+    signature = digest({'format': 4, 'document': document, 'content': content})
     if headings and previous_receipt.get('digest') == signature:
         return previous_receipt
     xml = run / 'sync-payload.xml'; xml.write_text(content)
@@ -160,7 +195,7 @@ def sync(run, document, binary="lark-cli"):
     expected_text = {''.join(x.itertext()) for x in expected.iter() if x.tag in ('p','h2')}
     actual_text = {''.join(x.itertext()) for x in actual.iter() if x.tag in ('p','h2')}
     if not expected_text <= actual_text: raise LoopError('Report content could not be verified')
-    result = {'status':'synced','digest':signature,'revision':verified.get('revision_id'),'format':3,
+    result = {'status':'synced','digest':signature,'revision':verified.get('revision_id'),'format':4, 'row_reasons':row_reasons(payload),
               'document':document, 'attempt_reason':attempt_reason(payload),
               'attempt_reason_source':'preserved' if payload.get('report', {}).get('report_notes', {}).get('attempt_reason') else 'proposal'}
     write(receipt,result)

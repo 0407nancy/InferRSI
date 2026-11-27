@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser(description="Local Codex + SSH + InferRSI; use the configured device allowlist")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--remote-config", required=True)
-    parser.add_argument('--launch-config', help='Filled config/launch.template.json on the local machine')
+    parser.add_argument('--launch-config', required=True, help='Filled config/launch.template.json on the local machine')
     parser.add_argument("--model")
     parser.add_argument("--effort")
     parser.add_argument("--codex")
@@ -27,14 +27,7 @@ def main():
     args = parser.parse_args()
     if not args.run_id.replace("-", "").replace("_", "").isalnum():
         parser.error("Use a simple run identifier")
-    base = "<REMOTE_H3_ROOT>/h3-dev-v033rc1"
-    deployment = launch(args.launch_config) if args.launch_config else {
-        'ssh': '<SSH_PROGRAM>', 'host': '93', 'expected_user': '<REMOTE_USER>',
-        'container': '<CONTAINER>', 'remote_python': base + '/venvs/inferrsi/bin/python',
-        'remote_package': base + '/packages/inferrsi-loop', 'remote_runs': base + '/experiments/inferrsi-loop-20261124/runs',
-        'local_runs': str(ROOT.parent / 'inferrsi-loop-runs'), 'model': 'gpt-6-astra', 'effort': 'medium',
-        'codex': '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
-        'lark': 'lark-cli', 'document': '<REPORT_DOCUMENT_URL>'}
+    deployment = launch(args.launch_config)
     for key in ('model', 'effort', 'codex'):
         if getattr(args, key):
             deployment[key] = getattr(args, key)
@@ -46,6 +39,7 @@ def main():
         command = [sys.executable, str(ROOT / "scripts/local_driver.py"), "--root", str(local),
                    "--remote-run", remote_run, "--remote-config", args.remote_config,
                    *[part for key in ('model', 'effort', 'codex', 'ssh', 'host', 'container', 'remote_python', 'remote_package', 'expected_user', 'lark')
+                     if deployment.get(key) is not None
                      for part in ('--' + key.replace('_', '-'), deployment[key])]]
         if args.wait_for_devices:
             command += ["--wait-for-devices"]
@@ -72,7 +66,7 @@ def main():
     print(json.dumps({"status": report["status"], "accepted": len(report["accepted"]),
                       "candidate_optimizations": len(report.get("candidate_optimizations", [])),
                       "pending_review": len(report["validated_pending_review"]), "results": str(local / "results.json")}, ensure_ascii=False))
-    return driver_code or (2 if report["status"] == "blocked" else 0)
+    return driver_code or (2 if report["status"] in ("blocked", "finalization_incomplete", "waiting_resources") else 0)
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ def request(config, run, state, folder, changed):
              'source_hash': digest(manifest(folder / 'candidate')),
              'baseline_hash': digest(manifest(Path(run) / 'frozen/baseline')),
              'runtime': config.get('runtime', {}),
+             'workload_tasks': config.get('workload_tasks', []),
              'scope': 'whole_project', 'editable': config['project']['editable'],
              'measurement_plan': config.get('measurement_plan', {}),
              'max_devices': base.get('resources', {}).get('count', 0),
@@ -55,7 +56,7 @@ def bundle(config, run, folder):
     files = {}
     context = read(folder / 'context.json')
     files['optimization_context.json'] = base64.b64encode(__import__('json').dumps(
-        {key: context.get(key) for key in ('goal', 'profile_excerpt', 'history_excerpt', 'previous_feedback', 'project_knowledge')},
+        {key: context.get(key) for key in ('goal', 'profile_excerpt', 'history_excerpt', 'previous_feedback', 'project_knowledge', 'knowledge_enabled', 'own_experience')},
         ensure_ascii=False).encode()).decode()
     for label, root in [('baseline', Path(run) / 'frozen/baseline'), ('candidate', folder / 'candidate'),
                         ('reference_protocol', Path(config['protocols']['screen']['directory']))]:
@@ -70,6 +71,10 @@ def bundle(config, run, folder):
         for name in manifest(root):
             if not name.startswith('documents/'):
                 files['references/project-knowledge/' + name] = base64.b64encode((root / name).read_bytes()).decode()
+    own = Path(run) / 'knowledge'
+    if own.exists():
+        for name in manifest(own):
+            files['references/own-feedback/' + name] = base64.b64encode((own/name).read_bytes()).decode()
     if lifecycle.enabled(config):
         for label, root in [('supplements', folder / 'supplements'), ('previous_protocols', folder / 'protocol-versions')]:
             if root.exists():
@@ -93,6 +98,32 @@ def bundle(config, run, folder):
         files['model_metadata/location.json'] = base64.b64encode(__import__('json').dumps({'root': str(root), 'shards': inventory}).encode()).decode()
     return {'request': read(folder / 'local-test-request.json'), 'files': files,
             'model': config['model'], 'deadline': read(Path(run) / 'state.json')['deadline']}
+
+
+def validate_coverage(config, contract):
+    tasks = config.get('workload_tasks', [])
+    if not tasks:
+        return
+    coverage = contract.get('coverage', {})
+    cases = contract.get('cases', [])
+    ids = [c.get('id') for c in cases]
+    if not cases or any(not x for x in ids) or len(set(ids)) != len(ids):
+        raise LoopError('Parameterized local tests require distinct case IDs')
+    for case in cases:
+        if not case.get('provenance') or not case.get('constraints') or not case.get('inputs'):
+            raise LoopError('Each case needs source provenance, constraints and fixed input parameters')
+    if set(coverage) != set(tasks):
+        raise LoopError('Explain local applicability for every configured task')
+    for task, item in coverage.items():
+        if item.get('status') not in ('covered', 'not_applicable') or not item.get('reason'):
+            raise LoopError('Task coverage requires a reason and covered/not_applicable status')
+        chosen = item.get('cases', [])
+        if item['status'] == 'covered' and (not chosen or not set(chosen).issubset(ids)):
+            raise LoopError('Covered tasks must name existing frozen cases')
+        if item['status'] == 'not_applicable' and chosen:
+            raise LoopError('Inapplicable task must not name measured cases')
+    if not any(x['status'] == 'covered' for x in coverage.values()):
+        raise LoopError('Local test covers no configured task')
 
 
 def register(config, run, folder, payload):
@@ -120,6 +151,7 @@ def register(config, run, folder, payload):
     if not paths or any(not allowed(p, config['project']['editable']) for p in paths) or not all(allowed(n, paths) for n in request_value['changed_files']):
         raise LoopError('Local test does not cover the changed project sources')
     contract = spec['local_validation']
+    validate_coverage(config, contract)
     if config.get('measurement_plan'):
         contract['measurement_plan'] = {k: config['measurement_plan'][k] for k in ('warmups', 'measurements')}
     if contract.get('kind') != 'local_module' or contract.get('weight_origin') not in ('model_capture', 'checkpoint', 'parameter_free'):
@@ -176,6 +208,17 @@ def register(config, run, folder, payload):
     for key in ('measure_command', 'quality_command'):
         if not isinstance(stage[key], list) or not all(isinstance(x, str) and x for x in stage[key]):
             raise LoopError('Local test commands must be explicit argv lists')
+    if lifecycle.enabled(config):
+        older = sorted((folder / 'protocol-versions').glob('v*/draft.json'))
+        if older:
+            previous = read(older[-1])['protocol']['local_validation']
+            for key in ('module', 'numerical_rule', 'cases', 'coverage', 'measurement_plan'):
+                if previous.get(key) != contract.get(key):
+                    raise LoopError('Repair must preserve the frozen local test rule: ' + key)
+            old_inputs = {x['sha256'] for x in previous['evidence_files'] if x['role'] == 'input'}
+            new_inputs = {x['sha256'] for x in contract['evidence_files'] if x['role'] == 'input'}
+            if old_inputs != new_inputs:
+                raise LoopError('Repair must preserve frozen input bytes')
     # Resolve absent weight hashes on 93, before either side executes. Scripts
     # read this frozen adapter.json instead of embedding a guessed digest.
     contents['adapter.json'] = __import__('json').dumps(spec, indent=2).encode()
@@ -260,6 +303,8 @@ Return the requested JSON. No performance claims.'''
     prompt += '''\nProtocol relocation: InferRSI copies this directory into campaign/frozen/protocol. Never assert registered absolute input path equals __file__'s directory. Use reference_protocol/local_validation.py verify_consumed_input(contract, actual_input_path) to verify the file actually consumed by hash and role; keep verify_weights and contract_digest unchanged. Copy the current helper into the generated protocol. Old-container captures are historical-only unless explicitly requalified against current weights, semantics and layout. Read current-rounds.json for exact unresolved prerequisites.\n'''
     prompt += '''\nInterface details from integration testing: direction MUST be minimize or maximize. {python} is the controller interpreter and may not have torch; wrap the test to launch context.runtime.inference_python (or a verified interpreter from reference_protocol for legacy configurations), reusing the applicable existing environment/bootstrap helpers. Do not assume a personal deployment path. The passed {candidate} is the baseline tree during quality-baseline, so new candidate-only modules may be absent. Compare each side against the actual original implementation, and verify loaded source paths. numerical_status belongs inside result.local_validation; numerical_ok is top-level. Read warmups/measurements from adapter.json.local_validation.measurement_plan (normalized by registration), not a separate top-level setting. Handle empty tensors without max/mean on an empty reduction. Prefer representative dimensions from optimization_context.json and model metadata for performance. When exact current-request packed lengths are unavailable, construct deterministic fixed inputs from current source semantics and model metadata for bounded local performance and numerical validation; do not block all local testing solely on missing captured lengths. Record source paths/symbols, metadata, chosen lengths, head counts, dtype, layout/strides and branch conditions, distinguishing source-derived facts from chosen test values. Exercise the actual changed production branch on identical frozen inputs for baseline and candidate. Label these results as fixed-input local measurements with unverified workload representativeness, never as current-request or whole-model/E2E gains. Tiny tail/boundary cases are additional numerical checks, not a representative H3 performance metric. If correctness-critical dimensions or semantics cannot be established from source/metadata, request that specific missing evidence; do not guess them. Preserve existing frozen input bytes and hashes during protocol repair. Parameter-free operators need fixed input provenance, not invented weights. Keep any required real weights on 93. Preserve numerical and runtime failures truthfully.\n'''
     prompt += '''\nParameterized local fixtures: keep workload cases in a frozen input JSON and reuse one test implementation across requests. Record for each case its source/metadata references, source-derived constraints versus chosen values, shape, dtype, strides/layout, branch preconditions and input-generation seed/rule. Select a bounded case matrix covering applicable changed branches and multiple meaningful sizes; include semantic boundary cases for numerical checks. For prefix-length construction, cover full and partial valid KV prefixes and more than one valid sequence length; derive head configuration from current source/model metadata. Unknown exact request lengths do not prohibit legal source-derived cases, but workload representativeness must remain explicitly unverified. Parameterized inputs are not fabricated model weights: load actual weights for parameterized modules; parameter-free modules need input provenance. Invoke the changed production implementation and real backend, not a reimplementation or mocked kernel. Freeze timing scope, per-case measurement plan and any metric aggregation before evaluating either side; retain per-case timings and numerical evidence and never select only the fastest case. Boundary-only cases do not define the performance metric. Do not treat metadata-construction speedup as full attention speedup. New requests within the validated shape/layout/branch contract reuse the fixture; new lengths add cases, while new dtype/parallelism/batching/backend require applicability checks. Preserve frozen cases during repairs and do not run short/official requests to obtain them.\n'''
+    prompt += '''\nKnowledge policy: optimization_context.knowledge_enabled=false disables external history retrieval. Use supplied task facts, source/model metadata and this run feedback only, including repairs; do not inspect other run directories or historical document content.\n'''
+    prompt += '''\nTask coverage: if context.workload_tasks is set, adapter.local_validation must include cases=[{id,provenance,constraints,inputs}] and coverage={task:{status:covered|not_applicable,cases:[case_ids],reason}} for every configured task. T2VA/FL2VA differences in layout, branch or weights require separate cases. An identical local case can cover both only with an explicit source-based reason; first-frame-only code marks T2VA not_applicable. Keep one implementation and frozen parameterized inputs, not duplicated test scripts. Both quality and measure outputs must retain cases=[{id,numerical_status,...}] or cases=[{id,samples,timed,...}], respectively, for every case. Numerical-only boundaries have timed=false. The native evidence gate rejects omitted cases. Freeze the metric aggregation, never hide a regressing case; report per-case data with its task mapping.\n'''
     prompt += '''\nBounded repair workflow: read context.protocol_state repairs and previous_protocols/ for exact errors, and supplements/ for newly acquired evidence. Repair the protocol, never the candidate or frozen numerical rules. A baseline self-check must pass with unchanged baseline; candidate numerical failure is a valid rejection, not an excuse to weaken the test. If information is missing, return ready=false and missing_evidence=[{path,kind:text|list|safetensors_header,reason}] using context.evidence_roots. The driver fetches it on 93 and reinvokes you for this SAME candidate. Text evidence accepts .py/.json/.txt/.md/.toml/.yaml/.log regular UTF-8 files up to 2 MiB within evidence_roots; no unbounded logs or checkpoint bodies. Read supplement receipts as well as bodies: an unavailable receipt is not file content. Do not repeat an unchanged request rejected by file type, size or path policy; use a supported existing source or state the remaining limitation. Batch related known files in one request; directory listings locate evidence but do not replace reading relevant bodies. No arbitrary SSH or workloads here. Return [] when no evidence request is needed. Old-directory assertions are invalid after relocation; preserve hashes/roles instead. For versions after v1, reuse and minimally repair the preceding protocol rather than starting over. Both hardware and baseline run through the same frozen quality script. Avoid requesting complete large checkpoints: request headers, load real weights only on 93.\n'''
     result = run_command(command(settings, workspace, schema, answer), workspace, directory / 'agent',
                          settings.get('timeout_seconds', 900), env=model_environment(settings), stdin=prompt)

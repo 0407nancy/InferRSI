@@ -12,8 +12,10 @@ SCHEMA = {"type": "object", "properties": {
     "profile_reason": {"type": "string"},
     "hypothesis": {"type": "string"}, "rationale": {"type": "string"},
     "changed_files": {"type": "array", "items": {"type": "string"}},
+    "requires": {"type":"array","items":{"type":"string"}},
+    "conflicts": {"type":"array","items":{"type":"string"}},
     "test_suggestions": {"type": "array", "items": {"type": "string"}}},
-    "required": ["action", "profile_reason", "hypothesis", "rationale", "changed_files", "test_suggestions"],
+    "required": ["action", "profile_reason", "hypothesis", "rationale", "changed_files", "test_suggestions", "requires", "conflicts"],
     "additionalProperties": False}
 
 
@@ -63,6 +65,8 @@ def propose(settings, baseline, context, directory, editable):
         "Never request collection in reuse mode. "
         "Write rationale as one concise Chinese sentence explaining the observed or suspected overhead "
         "and why this strategy may reduce it; distinguish a hypothesis from measured evidence. "
+        "Declare requires/conflicts as prior candidate_NNN factor IDs when composition has semantic dependencies or incompatibilities; otherwise []. "
+        "Knowledge off permits task facts and this run feedback only: do not search other run directories or historical documents outside the provided factual bundle. "
         "Produce the requested JSON describing the actual patch.\nContext:\n" +
         json.dumps(context, ensure_ascii=False, indent=2)
     )

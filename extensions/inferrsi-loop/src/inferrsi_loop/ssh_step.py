@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import controller, local_tests, profiling, lifecycle
+from . import controller, local_tests, profiling, lifecycle, knowledge
 from .common import LoopError, digest, lock, manifest, read, safe_child, write
 from .planner import allowed
 
@@ -15,11 +15,17 @@ def dispatch(request):
     if action == 'configuration':
         if run.exists():
             controller.verify(run)
-            return {'initialized': True}
-        config = read(request['config'])
-        return {'initialized': False, 'knowledge_sources': config.get('knowledge_sources', [])}
+            return {'initialized': True, 'model': read(run/'frozen/config.json').get('model',{})}
+        config = knowledge.prepare_policy(read(request['config']))
+        return {'initialized': False, 'knowledge_sources': config.get('knowledge_sources', []), 'model': config.get('model',{})}
     if action == 'initialize':
-        controller.initialize(read(request['config']), run, document_snapshots=request.get('documents'))
+        config = read(request['config'])
+        if request.get('model_selection'):
+            selected = request['model_selection']
+            if any(not isinstance(selected.get(k),str) or not selected[k].strip() for k in ('name','effort')):
+                raise LoopError('Missing resolved model/effort')
+            config.setdefault('model',{}).update({k:selected[k] for k in ('name','effort')})
+        controller.initialize(config, run, document_snapshots=request.get('documents'))
         return {'initialized': True}
     if action == "advance":
         if not run.exists():
@@ -71,6 +77,10 @@ def dispatch(request):
                 root = Path(config['knowledge_directory'])
                 references.update({'project-knowledge/' + name: base64.b64encode((root/name).read_bytes()).decode()
                                    for name in manifest(root) if not name.startswith('documents/')})
+            own = run / 'knowledge'
+            if own.exists():
+                references.update({'own-feedback/' + name: base64.b64encode((own/name).read_bytes()).decode()
+                                   for name in manifest(own)})
             return {"round": state["round"], "context": context, "editable": config["project"]["editable"],
                     "deadline": state["deadline"], "model": config["model"],
                     "references": references,

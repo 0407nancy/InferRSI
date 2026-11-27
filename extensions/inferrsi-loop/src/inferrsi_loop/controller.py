@@ -22,6 +22,18 @@ def validate(config):
     task = config.get("task", "explore")
     if task not in ("explore", "ablate"):
         raise LoopError("Unknown task type")
+    workflow = config.get('workflow', {})
+    if workflow.get('after_explore', 'stop') not in ('stop', 'ablate'):
+        raise LoopError('workflow.after_explore must be stop or ablate')
+    if task == 'explore' and workflow.get('after_explore') == 'ablate':
+        if not 0 < workflow.get('ablation_max_seconds', 0) < config['budget']['max_seconds']:
+            raise LoopError('Reserve ablation time inside the total run budget')
+        stages = workflow.get('ablation_stages', [])
+        if not stages or any(x not in config['protocols'] for x in stages):
+            raise LoopError('Declare task-specific ablation protocols before exploration')
+        tasks = {config['protocols'][x].get('task') for x in stages}
+        if not set(config.get('workload_tasks', [])).issubset(tasks):
+            raise LoopError('Short E2E ablation must cover all configured tasks separately')
     profiling.validate(config.get("profile", {"mode": "skip"}), task)
     if task == "ablate":
         ablation.validate(config)
@@ -43,6 +55,7 @@ def validate(config):
 
 
 def initialize(config, run, *, document_snapshots=None):
+    config = knowledge.prepare_policy(config)
     validate(config)
     run = Path(run).resolve()
     if run.exists():
@@ -116,6 +129,9 @@ def initialize(config, run, *, document_snapshots=None):
              "started_at": time.time(), "deadline": time.time() + cfg["budget"]["max_seconds"],
              "history": [], "last_verdict": None, "last_stage": None, "reason": "initialized",
              "current_source": str(frozen / "baseline")}
+    state['overall_deadline'] = state['deadline']
+    if cfg.get('task','explore') == 'explore' and cfg.get('workflow',{}).get('after_explore') == 'ablate':
+        state['deadline'] -= cfg['workflow']['ablation_max_seconds']
     write(run / "state.json", state)
     return run
 
@@ -128,9 +144,11 @@ def verify(run):
 
 
 def save(run, config, state):
+    knowledge.writeback(config, run, state['history'])
     state['candidate_count'] = len(list((Path(run) / 'rounds').glob('*/proposal.json')))
     state['completed_candidates'] = state['completed_rounds']
     measured = {x['round'] for x in state['history'] if x.get('assessment', {}).get('metrics')
+                and x.get('evidence_verified', True)
                 and x.get('reason') != 'local_numerical_or_weight_evidence_missing'
                 and x.get('verdict') in ('PASS', 'FAIL')}
     state['effective_experiments'] = len(measured)
@@ -143,6 +161,9 @@ def save(run, config, state):
     summary.update(task=config.get("task", "explore"), model=config["model"]["name"], full_validation_accepted=state["status"] == "accepted",
                    scope="local_module_candidates" if local_only and config.get("task", "explore") == "explore" else config["protocols"].get("short", config["protocols"].get("full", config["protocols"]["screen"]))["scope"],
                    candidate_optimizations=state.get("candidate_optimizations", []))
+    summary['knowledge_enabled'] = knowledge.enabled(config)
+    summary['ablation'] = state.get('ablation')
+    summary['campaign_finals'] = state.get('campaign_finals', [])
     write(run / "candidate-optimizations.json", state.get("candidate_optimizations", []))
     write(run / "summary.json", summary)
     (run / "history.jsonl").write_text("".join(__import__("json").dumps(x, ensure_ascii=False) + "\n" for x in state["history"]))
@@ -178,7 +199,7 @@ def run_loop(run, *, resume=False):
             local_only = config.get("exploration", {}).get("validation") == "local_only"
             for number in range(state["round"], maximum + 1):
                 state["round"] = number
-                if time.time() >= state["deadline"]:
+                if time.time() >= state["deadline"] - evaluator.final_reserve(run / 'campaigns'):
                     break
                 verify(run)
                 directory = run / "rounds" / str(number)
@@ -186,6 +207,8 @@ def run_loop(run, *, resume=False):
                 state.update(status="planning", reason="model_exploration")
                 save(run, config, state)
                 context = {"goal": config["goal"], "round": number, "profile": diagnosis,
+                           "knowledge_enabled": knowledge.enabled(config),
+                           "own_experience": knowledge.own_context(run, config['goal']),
                            "profile_excerpt": profiling.excerpt(diagnosis["evidence"]),
                            "reference_directory": config.get("reference_directory"),
                            "reference_guide": (Path(config["reference_directory"]) / "guide.txt").read_text() if config.get("reference_directory") and (Path(config["reference_directory"]) / "guide.txt").is_file() else "",
@@ -200,9 +223,9 @@ def run_loop(run, *, resume=False):
                                                        "contract": p["local_validation"]}
                                                for name, p in config["protocols"].items() if p.get("local_validation")},
                            "native_build_contract_available": any(p.get("native_build_contract") for p in config["protocols"].values())}
-                if config.get("knowledge_query"):
+                if knowledge.enabled(config) and config.get("knowledge_query"):
                     context["knowledge"] = knowledge.retrieve(config["knowledge_query"], directory / "knowledge")
-                if config.get('knowledge_directory'):
+                if knowledge.enabled(config) and config.get('knowledge_directory'):
                     context['project_knowledge'] = knowledge.project_context(config['knowledge_directory'],
                         config.get('knowledge_query', config['goal']) + ' ' +
                         ' '.join(x.get('hypothesis', '') for x in state['history'][-3:]))
@@ -210,7 +233,7 @@ def run_loop(run, *, resume=False):
                 if number <= len(seeds) and not (directory / 'proposal.json').exists():
                     seed = seeds[number-1]
                     copy_inputs(seed['source'], directory / 'candidate', list(manifest(seed['source'])))
-                    proposal = {'hypothesis': seed['hypothesis'], 'source_hash': digest(manifest(directory / 'candidate')),
+                    proposal = {'hypothesis': seed['hypothesis'], 'rationale': seed.get('rationale',seed['hypothesis']), 'source_hash': digest(manifest(directory / 'candidate')),
                                 'replay_origin': seed['origin'], 'model_execution_host': 'retained_candidate'}
                     write(directory / 'context.json', context)
                     write(directory / 'proposal.json', proposal)
@@ -276,7 +299,9 @@ def run_loop(run, *, resume=False):
                             revision = read(directory / 'local-test-receipt.json').get('protocol_version', 0) if (directory / 'local-test-receipt.json').exists() else 0
                             attempt_output = output / (f'v{revision:02d}-{attempt}' if revision else str(attempt))
                             result = evaluator.assess(stage_name, protocol, run / "frozen/baseline", candidate,
-                                                     proposal["hypothesis"], attempt_output, diagnosis, state["deadline"])
+                                                     proposal["hypothesis"], attempt_output, diagnosis, state["deadline"],
+                                                     campaign_root=run / 'campaigns', round_limit=maximum,
+                                                     knowledge_enabled=knowledge.enabled(config))
                             if result["verdict"] != "INCONCLUSIVE" or result["reason"] == "needs_numerical_review" or time.time() >= state["deadline"] or (local_only and lifecycle.enabled(config)):
                                 if stage_name == "full" and result["verdict"] == "PASS":
                                     state["full_evaluation"] = str(attempt_output)
@@ -286,11 +311,15 @@ def run_loop(run, *, resume=False):
                               "stage": stage_name, "protocol": protocol_name, "verdict": result["verdict"],
                               "reason": result["reason"], "source_hash": proposal["source_hash"],
                               "assessment": result["assessment"]}
+                    record.update(campaign=result['campaign'], observation=result['observation'],
+                                  evidence_verified=result.get('evidence_verified', True),
+                                  decision=str(attempt_output / 'decision.json') if not final else str(output / 'final-decision.json'),
+                                  scope=protocol['scope'], coverage=protocol.get('local_validation', {}).get('coverage'))
                     record['protocol_version'] = lifecycle.cursor(directory)['version'] if lifecycle.enabled(config) else 0
                     if not any(x["round"] == number and x["stage"] == stage_name and x.get('protocol_version', 0) == record['protocol_version'] for x in state["history"]):
                         state["history"].append(record)
                     write(directory / "feedback.json", record)
-                    if result["verdict"] == "INCONCLUSIVE":
+                    if result["verdict"] == "INCONCLUSIVE" or not result.get('evidence_verified', True):
                         if local_only and result["reason"] == "needs_numerical_review":
                             break
                         if local_only and lifecycle.enabled(config) and (directory / 'local-test-receipt.json').exists():
@@ -301,14 +330,14 @@ def run_loop(run, *, resume=False):
                             state['reason'] = 'Protocol repair budget exhausted'
                             break
                         raise LoopError("Incomplete evaluation evidence; inspect before retry")
-                    if result["verdict"] == "FAIL":
+                    if result["verdict"] == "FAIL" or not result.get('evidence_verified', True):
                         break
                     if local_only:
                         item = {"round": number, "hypothesis": proposal["hypothesis"],
                                 "status": "candidate_optimization", "source": str(candidate),
                                 "source_hash": proposal["source_hash"], "baseline_hash": digest(manifest(run / "frozen/baseline")),
                                 "patch": str(directory / "candidate.patch"), "protocol": protocol_name,
-                                "scope": protocol["scope"], "assessment": result["assessment"],
+                                "scope": protocol["scope"], "assessment": result["assessment"], "campaign":result["campaign"],
                                 "decision": str(attempt_output / "decision.json"), "e2e_validated": False}
                         candidates = state.setdefault("candidate_optimizations", [])
                         if not any(x["round"] == number for x in candidates):
@@ -324,6 +353,24 @@ def run_loop(run, *, resume=False):
                         return read(run / "summary.json")
                 state.update(completed_rounds=number, round=number + 1)
                 save(run, config, state)
+            if local_only:
+                state['campaign_finals'] = evaluator.finalize_all(run / 'campaigns', state['deadline'])
+            incomplete = [x for x in state.get('campaign_finals',[]) if x.get('status') == 'incomplete' and x.get('reason') == 'final_budget_exhausted']
+            for item in state.get('candidate_optimizations',[]):
+                item['eligible_for_ablation'] = False
+                for result in state.get('campaign_finals',[]):
+                    final = result.get('final') or {}
+                    if item.get('campaign') == result['campaign'] and item['source_hash'] == result.get('source_hash'):
+                        item['native_final_verdict'] = final['assessment']['verdict']
+                        item['eligible_for_ablation'] = item['native_final_verdict'] == 'PASS' and result.get('evidence_verified',True)
+            evaluator.confirm_remaining_candidates(run, state, state['deadline'])
+            state['ablation'] = ablation.handoff(config, run, state)
+            if state['ablation'] and state['ablation'].get('status') in ('blocked','waiting_resources'):
+                raise Busy('Ablation resources unavailable') if state['ablation']['status'] == 'waiting_resources' else LoopError('Ablation incomplete; inspect retained child run')
+            if incomplete:
+                state.update(status='finalization_incomplete',reason='partial_finals_completed')
+                save(run,config,state)
+                return read(run/'summary.json')
             state.update(status="screen_only_complete" if (local_only or not config.get("enable_full", True)) and state["completed_rounds"] == maximum
                          else "budget_exhausted", reason="declared_search_budget_reached")
         except Busy:

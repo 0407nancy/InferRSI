@@ -12,7 +12,5 @@
   "codex": "/tools/codex",
   "lark": "/tools/lark-cli",
   "lark_skill": "/docs/lark/SKILL.md",
-  "document": "https://example.com/wiki/results",
-  "model": "fixture-model",
-  "effort": "medium"
+  "document": "https://example.com/wiki/results"
 }
