@@ -76,6 +76,8 @@ def manifest(root):
 def copy_inputs(source, target, includes):
     import shutil
     source, target = Path(source).resolve(), Path(target)
+    if '.' in includes:
+        includes = project_inputs(source)
     if target.exists():
         raise LoopError("Snapshot destination already exists")
     target.mkdir(parents=True)

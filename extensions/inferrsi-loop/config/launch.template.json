@@ -11,8 +11,6 @@
   "remote_runs": "<REMOTE_RUNS_DIRECTORY>",
   "local_runs": "<LOCAL_RUNS_DIRECTORY>",
   "codex": "<LOCAL_CODEX_PROGRAM>",
-  "model": "<MODEL_NAME>",
-  "effort": "medium",
   "lark": "<LARK_PROGRAM>",
   "lark_skill": "<LARK_DOC_SKILL>",
   "document": "<REPORT_DOCUMENT_URL>"

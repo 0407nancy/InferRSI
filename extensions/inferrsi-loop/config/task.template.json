@@ -2,8 +2,6 @@
   "schema_version": 1,
   "goal": "<OPTIMIZATION_GOAL>",
   "model": {
-    "name": "<MODEL_NAME>",
-    "effort": "medium",
     "transport": "local_ssh"
   },
   "project": {
@@ -65,7 +63,7 @@
       "repetitions": 1,
       "warmups": 0,
       "timeout_seconds": 1800,
-      "final_reserve_seconds": 1,
+      "final_reserve_seconds": 180,
       "resources": {
         "count": 2,
         "allow": [
@@ -134,5 +132,14 @@
   },
   "runtime": {
     "inference_python": "<INFERENCE_PYTHON>"
+  },
+  "knowledge": {
+    "enabled": true,
+    "factual_reference_directory": null,
+    "factual_evidence_roots": []
+  },
+  "workload_tasks": [],
+  "workflow": {
+    "after_explore": "stop"
   }
 }

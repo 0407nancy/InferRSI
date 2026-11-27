@@ -11,6 +11,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 from inferrsi_loop.configuration import launch
+from inferrsi_loop import model_selection
+from inferrsi_loop.common import read, write, LoopError
 
 
 def deployment(args):
@@ -35,6 +37,8 @@ def main():
     folder = Path(deployment(args).get('local_runs', str(ROOT.parent / 'inferrsi-loop-runs'))) / run_id
     folder.mkdir(parents=True, exist_ok=True)
     if not a.worker:
+        if not (folder/'parent-session.json').exists():
+            write(folder/'parent-session.json', model_selection.session_context())
         command = [sys.executable, str(Path(__file__).resolve()), '--worker', '--task-file', str(task),
                    '--recoveries', str(a.recoveries), '--', *args]
         with (folder / 'supervisor.log').open('ab') as log:
@@ -87,10 +91,19 @@ def supervise(folder, args, budget):
         schema.write_text(json.dumps({'type':'object','properties':{
             'disposition':{'type':'string','enum':['retry','report_only','needs_attention']},
             'reason':{'type':'string'}},'required':['disposition','reason'],'additionalProperties':False}))
-        prompt = f'''Read README.md and {folder}/task.txt, supervisor-config.json, remote-status.json and attempt-{attempt}.log in {folder}. You are recovering an existing authorized run, with no chat context. Diagnose and fix only recoverable infrastructure/adapter issues. If sandbox blocks authorized network or credential-store access, request targeted escalation through automatic approval review; never disable sandbox or change auth configuration. Inspect remote state before actions; never duplicate an in-flight experiment. Do not start the driver: the supervisor retries it after you exit. Preserve frozen inputs, budgets, numerical gates, evidence and the configured device allowlist. Never kill unrelated jobs, change credentials, disable host verification, or rewrite frozen runs. If frozen artifacts need changes or authorization is missing, leave an explanation in {folder}/recovery-{attempt}.txt and exit. For publication failures only repair/report retained results; do not launch experiments. Read applicable AGENTS.md and lark-doc skill before Feishu operations. Save diagnosis and changes in recovery-{attempt}.txt. Return the structured disposition: retry only when a concrete fix or verified transient recovery permits it; report_only for pending publication; needs_attention for unresolved permission/frozen-runtime issues. Protocol revisions and evidence acquisition are owned by the loop lifecycle; do not mutate its state. Never repeat an unchanged deterministic error. Requirements:\n{(folder / 'task.txt').read_text()}'''
+        prompt = f'''Read README.md and {folder}/task.txt, supervisor-config.json, remote-status.json and attempt-{attempt}.log in {folder}. You are recovering an existing authorized run, with no chat context. Diagnose and fix only recoverable infrastructure/adapter issues. If sandbox blocks authorized network or credential-store access, request targeted escalation through automatic approval review; never disable sandbox or change auth configuration. Inspect remote state before actions; never duplicate an in-flight experiment. Do not start the driver: the supervisor retries it after you exit. Preserve frozen inputs, budgets, numerical gates, evidence and the configured device allowlist. Never kill unrelated jobs, change credentials, disable host verification, or rewrite frozen runs. If frozen artifacts need changes or authorization is missing, leave an explanation in {folder}/recovery-{attempt}.txt and exit. For publication failures only repair/report retained results; do not launch experiments. When remote-status.json knowledge_enabled is false, do not consult other runs or historical optimization documents for recovery; use this run evidence and task facts only. Read applicable AGENTS.md and lark-doc skill before Feishu operations. Save diagnosis and changes in recovery-{attempt}.txt. Return the structured disposition: retry only when a concrete fix or verified transient recovery permits it; report_only for pending publication; needs_attention for unresolved permission/frozen-runtime issues. Protocol revisions and evidence acquisition are owned by the loop lifecycle; do not mutate its state. Never repeat an unchanged deterministic error. Requirements:\n{(folder / 'task.txt').read_text()}'''
+        try:
+            selection_path = folder/'model-selection.json'
+            selection = read(selection_path) if selection_path.exists() else model_selection.resolve(
+                {'model':option('--model',selected.get('model')),'effort':option('--effort',selected.get('effort'))},
+                session=read(folder/'parent-session.json') if (folder/'parent-session.json').exists() else None)
+        except LoopError as exc:
+            state.update(status='needs_attention',reason=str(exc))
+            write(folder/'supervisor-status.json',state)
+            return
         with (folder / f'recovery-{attempt}.log').open('w') as log:
             try:
-                subprocess.run([binary, 'exec', '--model', option('--model', selected.get('model', 'gpt-6-astra')),
+                subprocess.run([binary, 'exec', '--model', selection['model'], '-c', 'model_reasoning_effort='+json.dumps(selection['effort']),
                                 '--approve-for-me', '--skip-git-repo-check', '--cd', str(ROOT),
                                 '--output-schema', str(schema), '--output-last-message', str(answer), '-'],
                                input=prompt, text=True, stdout=log, stderr=log, timeout=900)

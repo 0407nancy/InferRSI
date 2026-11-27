@@ -5,6 +5,93 @@ import sys
 from .common import read, run_command, write
 
 
+def enabled(config):
+    return config.get('knowledge', {}).get('enabled', True)
+
+
+def prepare_policy(config):
+    """One policy for every prompt/bundle/evidence entry; no change to task facts."""
+    import copy
+    cfg = copy.deepcopy(config)
+    policy = cfg.setdefault('knowledge', {})
+    policy.setdefault('enabled', True)
+    if type(policy['enabled']) is not bool:
+        raise LoopError('knowledge.enabled must be boolean')
+    if not policy['enabled']:
+        # Historical references may contain solutions; only explicit factual roots survive.
+        cfg['knowledge_sources'] = []
+        cfg['history_files'] = []
+        cfg.pop('knowledge_directory', None)
+        cfg.pop('knowledge_query', None)
+        cfg['reference_directory'] = policy.get('factual_reference_directory')
+        recovery = cfg.setdefault('local_recovery', {})
+        recovery['evidence_roots'] = list(dict.fromkeys(
+            [cfg['project']['path']] +
+            ([cfg['model_assets']['root']] if cfg.get('model_assets', {}).get('root') else []) +
+            policy.get('factual_evidence_roots', [])))
+    return cfg
+
+
+def writeback(config, run, history):
+    """Append evidence-grounded experiences once; both arms retain their own feedback."""
+    import time
+    run = Path(run)
+    root = run / 'knowledge'
+    index_path = root / 'catalog.json'
+    index = read(index_path) if index_path.exists() else {'schema_version': 1, 'entries': [], 'unindexed': []}
+    existing = {e['id']: e for e in index['entries']}
+    changed = False
+    for item in history:
+        number = item.get('round')
+        proposal_path = run / 'rounds' / str(number) / 'proposal.json'
+        if not proposal_path.exists():
+            continue
+        proposal = read(proposal_path)
+        identity = digest([run.name, number, item.get('stage'), item.get('protocol_version'),
+                           item.get('observation'), item.get('source_hash')])[:24]
+        entry_path = root / 'content' / (identity + '.json')
+        value = {'schema_version': 1, 'experience_id': identity, 'run_id': run.name,
+                 'candidate': number, 'knowledge_enabled': enabled(config),
+                 'hypothesis': proposal['hypothesis'], 'rationale': proposal.get('rationale', ''),
+                 'changed_files': proposal.get('changed_files', []),
+                 'conditions': {'baseline': digest(manifest(run / 'frozen/baseline')),
+                                'runtime': config.get('runtime', {}), 'scope': item.get('scope'),
+                                'protocol': item.get('protocol'), 'coverage': item.get('coverage')},
+                 'outcome': item.get('verdict', 'INCONCLUSIVE'), 'reason': item.get('reason'),
+                 'assessment': item.get('assessment', {}),
+                 'evidence': {'decision': item.get('decision'), 'campaign': item.get('campaign'),
+                              'observation': item.get('observation'),
+                              'patch': str(run / 'rounds' / str(number) / 'candidate.patch')},
+                 'interpretation': 'Scoped observation; infrastructure/missing evidence is not a disproved strategy.'}
+        if identity in existing:
+            if read(entry_path) != value:
+                raise LoopError('Retained experience changed; preserve prior observations')
+            continue
+        write(entry_path, value)
+        index['entries'].append({'id': identity, 'source_id': run.name, 'origin': str(entry_path),
+            'title': proposal['hypothesis'], 'environment': config.get('environment_id', 'recorded_in_conditions'),
+            'content': str(entry_path.relative_to(root)), 'sha256': sha(entry_path),
+            'evidence_status': 'measured' if item.get('assessment', {}).get('metrics') else 'unmeasured'})
+        existing[identity] = index['entries'][-1]
+        changed = True
+    if changed:
+        index['updated_at'] = time.time()
+        write(index_path, index)
+        write(root / 'coverage.json', {'sources': [{'source': {'id': run.name}, 'indexed': len(index['entries']), 'omissions': []}],
+                                       'complete_for_declared_text': True})
+    return root
+
+
+def own_context(run, query):
+    root = Path(run) / 'knowledge'
+    if not (root / 'catalog.json').exists():
+        return None
+    value = project_context(root, query)
+    value['catalog'] = 'references/own-feedback/catalog.json'
+    value['coverage']['details'] = 'references/own-feedback/coverage.json'
+    return value
+
+
 def retrieve(query, output):
     output = Path(output)
     receipt = output / "knowledge.json"

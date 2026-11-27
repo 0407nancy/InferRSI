@@ -20,7 +20,7 @@ def launch(path):
     filled(value)
     for key in ('ssh', 'host', 'expected_user', 'expected_hostname', 'ssh_guide', 'lark',
                 'lark_skill', 'document', 'container', 'remote_python', 'remote_package',
-                'remote_runs', 'local_runs', 'codex', 'model', 'effort'):
+                'remote_runs', 'local_runs', 'codex'):
         if not isinstance(value.get(key), str) or not value[key].strip():
             raise LoopError('Missing launch configuration: ' + key)
     for key in ('ssh', 'ssh_guide', 'lark', 'lark_skill', 'remote_python', 'remote_package', 'remote_runs', 'local_runs', 'codex'):

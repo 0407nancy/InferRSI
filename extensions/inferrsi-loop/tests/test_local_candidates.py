@@ -136,11 +136,40 @@ class LocalCandidateTests(unittest.TestCase):
         self.assertEqual(len(report['candidate_optimizations']), 1)
         self.assertEqual(report['accepted'], [])
 
+    def test_native_blocked_campaign_does_not_prevent_verified_ablation(self):
+        self.configure()
+        script = self.root/'protocol/check.py'
+        script.write_text(script.read_text()+"\nif '# pending-review' in (__import__('pathlib').Path(a.project)/'candidate.py').read_text() and a.action=='quality':\n d['local_validation']['numerical_status']='needs_review'\n p.write_text(__import__('json').dumps(d))\n")
+        self.cfg['workflow'] = {'after_explore':'ablate', 'ablation_max_seconds':120,
+                               'ablation_stages':['screen']}
+        self.start()
+        self.submit('from collections import Counter\ndef histogram(values): return dict(Counter(values))\n# pending-review\n')
+        first = controller.run_loop(self.run, resume=True)
+        self.assertEqual(first['status'], 'awaiting_local_proposal', first)
+        self.assertEqual(first['history'][0]['verdict'], 'INCONCLUSIVE')
+        self.submit('from collections import Counter\ndef histogram(values): return dict(Counter(values))\n')
+        result = controller.run_loop(self.run, resume=True)
+        self.assertEqual(result['status'], 'screen_only_complete', result)
+        self.assertTrue(result['candidate_optimizations'][0]['eligible_for_ablation'])
+        self.assertEqual(result['ablation']['status'], 'ablation_complete')
+        self.assertTrue(any(x.get('reason') == 'blocked' for x in result['campaign_finals']))
+
+    def test_multiple_passing_ideas_are_all_confirmed(self):
+        self.configure()
+        self.start()
+        self.submit('from collections import Counter\ndef histogram(values): return dict(Counter(values))\n')
+        controller.run_loop(self.run, resume=True)
+        self.submit('def histogram(values):\n result={}\n for value in values: result[value]=result.get(value,0)+1\n return result\n')
+        result = controller.run_loop(self.run, resume=True)
+        self.assertEqual(len(result['candidate_optimizations']), 2, result)
+        self.assertTrue(all(x['eligible_for_ablation'] for x in result['candidate_optimizations']), result)
+        self.assertTrue((self.run/'candidate-finals').is_dir())
+
     def test_pending_numerical_review_is_retained_and_next_exploration_continues(self):
         self.configure()
         self.start()
         self.submit('def histogram(values): return {}\n')
-        with patch.object(evaluator, 'assess', return_value={'verdict': 'INCONCLUSIVE', 'reason': 'needs_numerical_review', 'assessment': {}}):
+        with patch.object(evaluator, 'assess', return_value={'verdict': 'INCONCLUSIVE', 'reason': 'needs_numerical_review', 'assessment': {}, 'campaign':'fixture', 'observation':'fixture'}):
             result = controller.run_loop(self.run, resume=True)
         self.assertEqual(result['status'], 'awaiting_local_proposal')
         self.assertEqual(result['completed_rounds'], 1)

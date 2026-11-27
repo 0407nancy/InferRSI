@@ -16,12 +16,13 @@ class ReporterTests(unittest.TestCase):
         payload['report']['other_candidates'][0]['rationale']='减少中间拷贝可能降低内存访问开销。'
         text=reporter.render(payload);root=ET.fromstring('<fragment>'+text+'</fragment>')
         self.assertEqual(len(root.findall('h2')),1)
+        self.assertEqual([n.find('p').text for n in root.findall('.//thead/tr/th')], ['优化项','尝试原因','实测结果','结论'])
         self.assertEqual(len(root.findall('.//tbody/tr')),2)
         self.assertIn('未测量',text);self.assertIn('10.00%',text)
         self.assertIn('Reduce copies &lt; safely',text)
         self.assertIn('/runs/example-01/results.json',text)
         self.assertIn('不代表真实请求',text)
-        self.assertIn('尝试原因：第1项：减少中间拷贝可能降低内存访问开销。',text)
+        self.assertIn('减少中间拷贝可能降低内存访问开销。',text)
     def test_legacy_migration_idempotence_and_bounded_update(self):
         with tempfile.TemporaryDirectory() as tmp:
             run=Path(tmp);payload=self.payload();write(run/'sync-outbox.json',payload)
@@ -50,9 +51,8 @@ class ReporterTests(unittest.TestCase):
                 self.assertIn('New measured bottleneck hypothesis',current)
                 # Simulate a manually supplemented paragraph and a legacy receipt.
                 root=ET.fromstring(current)
-                for node in root.findall('p'):
-                    if (node.text or '').startswith('尝试原因：'):
-                        node.text='尝试原因：手工补充的具体依据。'
+                node=ET.SubElement(root,'p')
+                node.text='尝试原因：手工补充的具体依据。'
                 current=ET.tostring(root,encoding='unicode')
                 write(run/'sync-receipt.json',{'format':2,'digest':'old'})
                 reporter.sync(run,'doc')
@@ -83,4 +83,4 @@ class ReporterTests(unittest.TestCase):
             result=module.collect(run)
             self.assertEqual(result['other_candidates'][0]['rationale'],'减少重复访存。')
             reporter.enqueue(run)
-            self.assertIn('尝试原因：第1项：减少重复访存。',reporter.render(json.loads((run/'sync-outbox.json').read_text())))
+            self.assertIn('减少重复访存。',reporter.render(json.loads((run/'sync-outbox.json').read_text())))

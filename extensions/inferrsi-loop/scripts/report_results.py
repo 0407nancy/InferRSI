@@ -50,6 +50,7 @@ def collect(run):
               "other_candidates": [item for item in items if item["status"] not in ("accepted", "validated_pending_human_review")]}
     result["started_at"] = json.loads((run / "state.json").read_text()).get("started_at")
     result["goal"] = config.get("goal", "")
+    result["knowledge_enabled"] = config.get("knowledge", {}).get("enabled", True)
     result["task"] = config.get("task", "explore")
     result["profiling"] = {"mode": config.get("profile", {}).get("mode", "reuse"),
                            "requests": [json.loads(p.read_text()) for p in sorted((run / "profiling").glob("request-*.json"))]}
@@ -67,6 +68,10 @@ def collect(run):
         result["ablation"]["selection_stage"] = selected_stage
         result["ablation"]["selected_factors"] = [r["removed"] for r in rows if r.get("removed") and r["stage"] == selected_stage and r.get("passes_selection_threshold") is True]
         result["model_calls_during_execution"] = False
+    if (run / 'ablation/summary.json').exists():
+        child = collect(run / 'ablation')
+        result['ablation'] = child.get('ablation', {})
+        result['ablation']['run'] = child['run']
     (run / "results.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     return result
 

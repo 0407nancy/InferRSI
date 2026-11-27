@@ -107,6 +107,28 @@ def protocols(cfg, args):
                                'applies_to': 'performance phases of screen, short, full, and fresh unprofiled baseline'}
 
 
+def split_short_tasks(cfg):
+    """Reuse full.py with one frozen request per native campaign; no outer metric gates."""
+    if 'short' not in cfg['protocols']:
+        return
+    original = cfg['protocols']['short']
+    source = Path(original['directory'])
+    spec = read(source/'h3.json')
+    for case, task in (('starship','t2va'),('dinner','fl2va')):
+        if case not in spec['cases']:
+            raise LoopError('Short ablation requires both H3 tasks')
+        directory = source.with_name(source.name+'-'+task)
+        copy_inputs(source,directory,['.'])
+        one = copy.deepcopy(spec)
+        one['cases'] = {case:spec['cases'][case]}
+        one['validation_scope'] = 'short_functional'
+        write(directory/'h3.json',one)
+        stage = copy.deepcopy(original)
+        stage.update(directory=str(directory),instructions=str(directory/'instructions.txt'),
+                     comparisons=[],task=task,scope='h3_short_'+task)
+        cfg['protocols']['short_'+task] = stage
+
+
 def prepare(args):
     cfg = copy.deepcopy(read(args.base))
     filled(cfg)
@@ -115,7 +137,7 @@ def prepare(args):
     cfg['task'] = args.task
     if args.goal:
         cfg['goal'] = args.goal
-    cfg['model'].update(transport='local_ssh')
+    cfg.setdefault('model',{}).update(transport='local_ssh')
     for key in ('name', 'effort'):
         value = getattr(args, 'model' if key == 'name' else key)
         if value:
@@ -157,6 +179,23 @@ def prepare(args):
             args.short_starship_request = short_root / 'starship-small.json'
             args.short_dinner_request = short_root / 'dining-small.json'
     protocols(cfg, args)
+    if getattr(args,'knowledge',None):
+        cfg.setdefault('knowledge',{})['enabled'] = args.knowledge == 'on'
+    if getattr(args,'devices',None):
+        devices = [int(x) for x in args.devices.split(',')]
+        if len(set(devices)) != len(devices) or any(x < 0 for x in devices):
+            raise LoopError('Invalid physical device list')
+        for protocol in cfg['protocols'].values():
+            resource = protocol.setdefault('resources',{})
+            if resource.get('count',0) > len(devices):
+                raise LoopError('Device allowance is smaller than protocol requirement')
+            resource.update(allow=devices,exclude=[])
+    if getattr(args,'after_explore',None):
+        cfg['workflow']={'after_explore':args.after_explore}
+        if args.after_explore == 'ablate':
+            cfg['workflow'].update(ablation_max_seconds=args.ablation_seconds,ablation_stages=['short_t2va','short_fl2va'])
+    if cfg.get('workflow',{}).get('after_explore') == 'ablate' or args.task == 'ablate':
+        split_short_tasks(cfg)
     mode = args.profile or ('skip' if args.task == 'ablate' else 'reuse')
     old = cfg.get('profile', {})
     profile = {'mode': mode, 'bottleneck': 'Use the supplied evidence and measured feedback to select the next hypothesis'}
@@ -239,6 +278,10 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--base', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--knowledge',choices=('on','off'))
+    p.add_argument('--devices',help='Physical IDs, e.g. 0,1 or 2,3')
+    p.add_argument('--after-explore',choices=('stop','ablate'))
+    p.add_argument('--ablation-seconds',type=int,default=0)
     p.add_argument('--task', choices=('explore', 'ablate'), default='explore')
     p.add_argument('--profile', choices=('reuse', 'collect', 'adaptive', 'skip'))
     p.add_argument('--evidence', type=Path)

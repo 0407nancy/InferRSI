@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "inferrsi-loop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Codex-driven exploration with frozen InferRSI evaluations"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["inferrsi==0.3.0"]
 
 [project.scripts]
 inferrsi-loop = "inferrsi_loop.cli:main"
