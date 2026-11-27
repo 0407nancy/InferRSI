@@ -102,6 +102,17 @@ def render(payload):
             conclusion = item['verdict']
         rows.append([label, notes.get('row_reasons',{}).get(label, '验证组合收益及各项贡献'), result, conclusion])
         if item.get('decision'): evidence.append(item['decision'])
+    if report.get('objective'):
+        objective = report['objective']
+        paragraph('目标状态：' + payload['status'] + '；当前最佳源码：' + objective.get('best_source', '未验证'))
+        for task, value in objective.get('target_results', {}).items():
+            target = report.get('objective_spec', {}).get('targets', {}).get(task, {})
+            label = '目标验证/' + task
+            result = (f"{value['baseline']:.4g} → {value['candidate']:.4g} {value['unit']}；加速 {value['speedup']:.3f}×"
+                      if value.get('status') == 'measured' else value.get('status', '未测量'))
+            rows.append([label, '对照冻结原始基线；目标 '+str(target.get('min_speedup', target.get('threshold'))),
+                         result, '目标通过（仍以总状态为准）' if value.get('met') else '目标未达成/证据不足'])
+            if value.get('decision'): evidence.append(value['decision'])
     def cells(values, tag):
         return '<tr>' + ''.join(f'<{tag}><p>{escape(str(v))}</p></{tag}>' for v in values) + '</tr>'
     if rows:

@@ -1,0 +1,38 @@
+{
+  "objective": {
+    "enabled": true,
+    "batch_candidates": 3,
+    "max_batches": 6,
+    "batch_seconds": 7200,
+    "verification_seconds": 21600,
+    "final_reserve_seconds": 43200,
+    "ablation_every_batches": 0,
+    "targets": {
+      "t2va": {
+        "screen_stage": "short_t2va",
+        "validation_stage": "official_t2va",
+        "workload": "<FROZEN_T2VA_REQUEST_WITH_LOSSLESS>",
+        "min_speedup": 1.2
+      },
+      "fl2va": {
+        "screen_stage": "short_fl2va",
+        "validation_stage": "official_fl2va",
+        "workload": "<FROZEN_FL2VA_REQUEST_WITH_LOSSLESS>",
+        "min_speedup": 1.2
+      }
+    }
+  },
+  "budget": {
+    "max_rounds": 18,
+    "max_seconds": 172800,
+    "max_infra_retries": 1,
+    "max_planner_retries": 1
+  },
+  "workflow": {
+    "after_explore": "stop"
+  },
+  "workload_tasks": [
+    "t2va",
+    "fl2va"
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "protocols": {
+    "short_t2va": {
+      "task": "t2va",
+      "directory": "<FROZEN_SHORT_T2VA_PROTOCOL>",
+      "instructions": "<PROTOCOL_INSTRUCTIONS_FILE>",
+      "measure_command": [
+        "{python}",
+        "{protocol}/measure.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "quality_command": [
+        "{python}",
+        "{protocol}/quality.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "metric_key": "latency_ms",
+      "metric_unit": "ms",
+      "quality_key": "quality_ok",
+      "scope": "short_t2va_lossless_e2e",
+      "direction": "minimize",
+      "min_improvement_pct": 0,
+      "repetitions": 1,
+      "warmups": 0,
+      "timeout_seconds": 21600,
+      "final_reserve_seconds": 21600,
+      "resources": {
+        "count": 2,
+        "allow": [
+          0,
+          1
+        ],
+        "lock_dir": "<REMOTE_SHARED_DEVICE_LOCK_DIRECTORY>"
+      }
+    },
+    "short_fl2va": {
+      "task": "fl2va",
+      "directory": "<FROZEN_SHORT_FL2VA_PROTOCOL>",
+      "instructions": "<PROTOCOL_INSTRUCTIONS_FILE>",
+      "measure_command": [
+        "{python}",
+        "{protocol}/measure.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "quality_command": [
+        "{python}",
+        "{protocol}/quality.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "metric_key": "latency_ms",
+      "metric_unit": "ms",
+      "quality_key": "quality_ok",
+      "scope": "short_fl2va_lossless_e2e",
+      "direction": "minimize",
+      "min_improvement_pct": 0,
+      "repetitions": 1,
+      "warmups": 0,
+      "timeout_seconds": 21600,
+      "final_reserve_seconds": 21600,
+      "resources": {
+        "count": 2,
+        "allow": [
+          0,
+          1
+        ],
+        "lock_dir": "<REMOTE_SHARED_DEVICE_LOCK_DIRECTORY>"
+      }
+    },
+    "official_t2va": {
+      "task": "t2va",
+      "directory": "<FROZEN_OFFICIAL_T2VA_PROTOCOL>",
+      "instructions": "<PROTOCOL_INSTRUCTIONS_FILE>",
+      "measure_command": [
+        "{python}",
+        "{protocol}/measure.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "quality_command": [
+        "{python}",
+        "{protocol}/quality.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "metric_key": "latency_ms",
+      "metric_unit": "ms",
+      "quality_key": "quality_ok",
+      "scope": "official_t2va_lossless_e2e",
+      "direction": "minimize",
+      "min_improvement_pct": 0,
+      "repetitions": 1,
+      "warmups": 0,
+      "timeout_seconds": 21600,
+      "final_reserve_seconds": 21600,
+      "resources": {
+        "count": 2,
+        "allow": [
+          0,
+          1
+        ],
+        "lock_dir": "<REMOTE_SHARED_DEVICE_LOCK_DIRECTORY>"
+      }
+    },
+    "official_fl2va": {
+      "task": "fl2va",
+      "directory": "<FROZEN_OFFICIAL_FL2VA_PROTOCOL>",
+      "instructions": "<PROTOCOL_INSTRUCTIONS_FILE>",
+      "measure_command": [
+        "{python}",
+        "{protocol}/measure.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "quality_command": [
+        "{python}",
+        "{protocol}/quality.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "metric_key": "latency_ms",
+      "metric_unit": "ms",
+      "quality_key": "quality_ok",
+      "scope": "official_fl2va_lossless_e2e",
+      "direction": "minimize",
+      "min_improvement_pct": 0,
+      "repetitions": 1,
+      "warmups": 0,
+      "timeout_seconds": 21600,
+      "final_reserve_seconds": 21600,
+      "resources": {
+        "count": 2,
+        "allow": [
+          0,
+          1
+        ],
+        "lock_dir": "<REMOTE_SHARED_DEVICE_LOCK_DIRECTORY>"
+      }
+    }
+  }
+}

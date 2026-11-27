@@ -107,30 +107,41 @@ def protocols(cfg, args):
                                'applies_to': 'performance phases of screen, short, full, and fresh unprofiled baseline'}
 
 
-def split_short_tasks(cfg):
+def split_short_tasks(cfg, source_name='short', prefix='short'):
     """Reuse full.py with one frozen request per native campaign; no outer metric gates."""
-    if 'short' not in cfg['protocols']:
+    if source_name not in cfg['protocols']:
         return
-    original = cfg['protocols']['short']
+    original = cfg['protocols'][source_name]
     source = Path(original['directory'])
     spec = read(source/'h3.json')
     for case, task in (('starship','t2va'),('dinner','fl2va')):
         if case not in spec['cases']:
-            raise LoopError('Short ablation requires both H3 tasks')
+            raise LoopError('H3 E2E requires both tasks')
         directory = source.with_name(source.name+'-'+task)
         copy_inputs(source,directory,['.'])
         one = copy.deepcopy(spec)
         one['cases'] = {case:spec['cases'][case]}
-        one['validation_scope'] = 'short_functional'
+        one['validation_scope'] = 'short_functional' if prefix == 'short' else 'official_quality'
+        if one.get('captures'):
+            one['captures'] = {case:one['captures'][case]}
         write(directory/'h3.json',one)
         stage = copy.deepcopy(original)
         stage.update(directory=str(directory),instructions=str(directory/'instructions.txt'),
-                     comparisons=[],task=task,scope='h3_short_'+task)
-        cfg['protocols']['short_'+task] = stage
+                     comparisons=[],task=task,scope='h3_'+prefix+'_'+task)
+        cfg['protocols'][prefix+'_'+task] = stage
 
 
 def prepare(args):
     cfg = copy.deepcopy(read(args.base))
+    if getattr(args, 'objective', None):
+        extension = read(args.objective)
+        for key in ('objective','budget','workflow'):
+            if key in extension:
+                cfg.setdefault(key, {}).update(extension[key])
+        if 'workload_tasks' in extension:
+            cfg['workload_tasks'] = extension['workload_tasks']
+    if getattr(args, 'target_protocols', None):
+        cfg['protocols'].update(read(args.target_protocols)['protocols'])
     filled(cfg)
     if args.output.exists():
         raise LoopError('Use a new configuration path; do not overwrite a reviewed task')
@@ -194,8 +205,10 @@ def prepare(args):
         cfg['workflow']={'after_explore':args.after_explore}
         if args.after_explore == 'ablate':
             cfg['workflow'].update(ablation_max_seconds=args.ablation_seconds,ablation_stages=['short_t2va','short_fl2va'])
-    if cfg.get('workflow',{}).get('after_explore') == 'ablate' or args.task == 'ablate':
+    if cfg.get('workflow',{}).get('after_explore') == 'ablate' or args.task == 'ablate' or cfg.get('objective',{}).get('enabled'):
         split_short_tasks(cfg)
+    if cfg.get('objective',{}).get('enabled') and 'full' in cfg['protocols'] and (Path(cfg['protocols']['full']['directory'])/'h3.json').exists():
+        split_short_tasks(cfg, 'full', 'official')
     mode = args.profile or ('skip' if args.task == 'ablate' else 'reuse')
     old = cfg.get('profile', {})
     profile = {'mode': mode, 'bottleneck': 'Use the supplied evidence and measured feedback to select the next hypothesis'}
@@ -277,6 +290,8 @@ def prepare(args):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--base', type=Path, required=True)
+    p.add_argument('--objective', type=Path, help='Filled objective.template.json; merge into a NEW task')
+    p.add_argument('--target-protocols', type=Path, help='Filled task-specific short and target stages')
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--knowledge',choices=('on','off'))
     p.add_argument('--devices',help='Physical IDs, e.g. 0,1 or 2,3')

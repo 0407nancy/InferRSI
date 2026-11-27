@@ -54,6 +54,22 @@ def collect(run):
     result["task"] = config.get("task", "explore")
     result["profiling"] = {"mode": config.get("profile", {}).get("mode", "reuse"),
                            "requests": [json.loads(p.read_text()) for p in sorted((run / "profiling").glob("request-*.json"))]}
+    if config.get('objective', {}).get('enabled'):
+        result['task'] = 'objective'
+        result['objective'] = summary.get('objective', {})
+        result['objective_spec'] = config['objective']
+        result['children'] = []
+        for child_run in sorted((run/'batches').glob('*/summary.json')):
+            child = collect(child_run.parent)
+            result['children'].append({'run':child['run'], 'status':child['status']})
+            for key in ('candidate_optimizations','other_candidates'):
+                for item in child.get(key, []):
+                    result[key].append(dict(item, round=child_run.parent.name+'/'+str(item['round'])))
+        rows = []
+        for child_run in sorted((run/'ablations').glob('*/summary.json')):
+            child = collect(child_run.parent)
+            rows += child.get('ablation', {}).get('rows', [])
+        result['ablation'] = {'rows':rows}
     if result["task"] == "ablate":
         rows = []
         for p in sorted((run / "comparisons").glob("*/*/comparison.json")):

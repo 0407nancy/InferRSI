@@ -1,9 +1,84 @@
 <!-- Public source distribution: site configuration and raw experiment data are intentionally excluded. -->
-# InferRSI loop v2
+# InferRSI loop v3
 
-本机 Codex 负责提出优化和修复测试；93 上的原生 InferRSI 负责冻结、对照评测、选优、恢复已有执行记录及最终复测。保留 v1，v2 使用独立目录、容器、虚拟环境和运行记录。默认开启 Knowledge，暂不按性能目标自动停止。
+本机 Codex 负责提出优化和修复测试；93 上的原生 InferRSI 负责冻结、对照评测、选优、恢复已有执行记录及最终复测。v3 在 v2 上增加可选目标调度，保留 v1/v2 及原有按次数探索、单独消融用法。默认开启 Knowledge；未设置 `objective.enabled=true` 时不启用目标驱动。
 
-## 架构与复用
+## v3：目标驱动的自动优化
+
+只增加 `objective.py` 状态调度，复用本机 driver/supervisor、局部测试恢复、原生 campaign 和 ablation。模型、推理强度、API 路由及认证继承方式不变。模型仍仅在本机运行；93 负责实验。
+
+```mermaid
+flowchart TD
+    A[本机 Codex：prompt + 配置模板] --> B[预检、冻结原始基线和目标请求]
+    B --> C[复用或采集 profiling]
+    C --> D[检索历史与本 run 经验]
+    D --> E[本机模型提出候选；局部性能与数值验证]
+    E -->|缺资料或脚本异常| R[有限回补、修复、重新预检]
+    R --> E
+    E --> F[原生 campaign 对照与 final]
+    F --> G[批次结束：兼容组合分别跑 T2VA / FL2VA short E2E]
+    G --> H[目标请求：当前最好组合对比固定原始基线]
+    H --> I{两任务都达标？}
+    I -->|否且有预算| D
+    I -->|是| J[累计优化消融：全组合与有效逐项移除]
+    J --> K[独立目标复测与质量检查]
+    K -->|通过| L[goal_met 或 pending_review]
+    K -->|未通过且有预算| D
+    I -->|预算耗尽| M[保留最好版本；goal_not_met]
+    E -.经验及证据.-> N[Reporter：飞书结果与目标差距]
+    K -.最终证据.-> N
+```
+
+每批从当前已验证的最好源码出发；用于累计目标比较的原始基线始终不变。局部收益不能相加代替 E2E 加速比。组合对两种任务均不回退才采用。下一批自动读取目标差距、前批结果及失败经验；Knowledge off 也保留本 run 自己的反馈。`adaptive` 补采仍由模型说明缺口，受全程补采次数限制。
+
+目标按任务独立配置：
+
+| 配置 | 含义 |
+|---|---|
+| `min_speedup: 1.2` | 相对固定原始基线至少 1.2×；延迟是 baseline/candidate，吞吐是 candidate/baseline |
+| `threshold` | 绝对目标，单位与测试脚本 `metric_unit` 一致；与 min_speedup 二选一 |
+| `screen_stage` | 该任务的 short E2E 组合/消融测试 |
+| `validation_stage` | 判断最终目标的测试；指定 official 请求才能声称完整请求达标 |
+| `workload` | 冻结请求身份；请求文件及 quality、长度、并行、dtype 等保存在相应测试目录 |
+| `batch_candidates` / `max_batches` | 每批候选数 / 最多批数，另受总 `budget.max_rounds` 限制 |
+| `batch_seconds` / `verification_seconds` | 每批探索 / 单个组合或验证阶段的最长秒数 |
+| `final_reserve_seconds` | 总时间内为最终验证保留的时间；不是额外预算 |
+| `ablation_every_batches` | 0：达标后消融；正数：每 N 批额外消融一次 |
+
+目标与局部候选筛选门槛独立。所有任务都要满足目标、无性能回退且通过冻结质量规则；有人工质量审查要求时最终状态为 `pending_review`。少量样本不证明统计显著性。超时明确 `goal_not_met`，保存目标差距和最好版本，不无限探索，也不靠重启延长预算。默认不会为了未达标自动更改请求、质量或数值门槛。
+
+消融复用现有执行器。跨批补丁默认依赖前批优化；不能合法移除的前置项明确记为依赖排除，不拼出无效源码。消融后若选择更好的子组合，仍须重新做目标验证。部分消融或复测缺证据不能报告达标。
+
+**首次配置**：填写 `config/launch.template.json` 和 `config/task.template.json`，再填写并合入 `config/objective.template.json`、`config/objective-protocols.template.json`。后两者是待填模板，不包含可直接运行的 H3 请求。优先将现有 H3 short/official 脚本和 CI 接成逐任务接口；不要另造测量器。`prepare_task.py --objective <目标.json> --target-protocols <测试接口.json>` 负责合入新配置，沿用其余参数；配置不覆盖旧 run。示例 1.2×、48 小时只是演示值，不是已证实可达的 H3 指标。
+
+可直接给本机 Codex 的简短 prompt（替换尖括号）：
+
+```text
+使用 $inferrsi-loop，在 v3 仓库从 launch/task/objective 模板创建配置。
+项目 <源码/模型/权重>；目标 <SSH机器/容器/推理Python>，卡 <编号>；profiling <复用资料或采集脚本>，记录到 <飞书文档>。
+T2VA、FL2VA 的 <目标请求> 均达到原始基线的 1.2×，quality=lossless；每批3候选，最多6批，总48小时，预留12小时。
+探索只做真实权重局部性能和数值验证，2+2，Knowledge on；批间测组合，达标后消融并独立复测。核实并冻结配置后独立执行。
+```
+
+已有配置：
+
+```text
+使用 $inferrsi-loop v3，读取 <launch.json> 和 <task.json>，创建目标驱动新运行。
+两任务目标均为原始基线 1.2×，每批3候选、最多6批、总48小时，物理0–1卡；复用 profiling。
+其余使用已填写配置；达标后消融及独立目标复测，结果同步配置中的飞书。
+```
+
+原有非目标 prompt 继续有效。要关闭目标驱动，在新配置中省略 `objective` 或设 `enabled=false`。
+
+运行路径：`supervise_h3.py → run_h3.py → local_driver.py → SSH ssh_step.advance → controller.run_loop → objective.advance`。后者建立 `batches/batch-NNN` 子运行，复用原流程；本机 driver 自动向正在等待的子运行提交模型结果。组合/消融继续走原生 campaign。查询顶层 `summary.json` 可看 `objective.phase/batch/target_results/best_source/active_run`；原始评测在 `batches/`、`validation/`、`ablations/`。恢复读取冻结代码和状态，不依赖聊天上下文。
+
+开发验证：公开源码包的 87 项 CPU 测试通过，覆盖 blocked 后继续探索和消融、多候选独立复测、两批目标迭代、两种任务检查及断点恢复；skill 格式和未定义名称检查通过。模型回复在编排测试中使用固定测试补丁，性能测量与 final 调用真实原生 InferRSI。尚未执行 H3/P800 目标驱动实机验收，不能据此声称达到示例性能目标。
+
+## blocked 修复
+
+原生 `campaign status` 对合法 blocked 状态返回退出码 2。适配器现在仅接受结构完整的 blocked 状态，记为未完成，不误当 SSH/CLI 崩溃；其他错误仍报错。外层与原生源码摘要编码不同，候选身份改为核对原生保留的源码快照。所有进入组合的候选必须有真实局部 PASS 和独立复测证据；同 campaign 中非 best 的合格候选另用原生测试确认。部分失败不会隐藏其他已验证候选，也不会将失败项纳入消融。已有冻结 run 不原地修改；用新代码创建新运行，旧运行用原冻结版本恢复。
+
+## 原有架构与复用
 
 | 部分 | 实现与复用 | 输入 → 输出 |
 |---|---|---|
@@ -144,10 +219,6 @@ Codex 根据 prompt 准备新任务配置，再调用已有 `supervise_h3.py →
 后台启动前保存 `parent-session.json`；初始化时生成 `model-selection.json`，记录最终 model/effort 及来源，并传到93冻结配置。Planner、测试生成和 supervisor 恢复均使用同一选择。运行中更换外层模型不会改变已启动实验；改变模型请新建运行。旧运行继续用旧版本代码和冻结配置。
 
 读取限于本机 Codex 状态库中当前 thread 的 rollout 路径及模型/强度元数据，不读取认证文件，不修改 provider/base_url。该元数据接口可能随 Codex 版本改变；找不到当前会话或缺少字段会明确报错，不静默回退。在普通终端直接运行脚本、没有当前 Codex 会话时，需显式提供 `--model`、`--effort`，或填写可选配置。无需改配置中的认证信息。
-
-## v3 与 blocked 修复
-
-v2 保留非目标用法；目标驱动使用 `inferrsi-loop-v3` 分支中的本扩展和其 objective 模板，旧运行不迁移。v2 同步修复合法 blocked 状态被当成 CLI 错误的问题，并核对原生保留源码快照。未完成项保留失败记录；只有通过数值、性能及独立复测的候选进入消融，同一 campaign 的非 best 候选另用原生评测确认。旧冻结运行仍须使用原代码恢复。
 
 ## Public distribution and validation
 

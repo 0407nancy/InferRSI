@@ -31,6 +31,17 @@ def dispatch(request):
         if not run.exists():
             controller.initialize(read(request["config"]), run)
         return controller.run_loop(run, resume=True)
+    # Parent owns phase selection; delegate only to its recorded child. Context
+    # digests still protect proposal/test uploads against stale replies.
+    if action != 'status' and run.exists():
+        controller.verify(run)
+        parent = read(run/'state.json').get('objective', {})
+        active = parent.get('active_run')
+        if active:
+            child = Path(active).resolve()
+            if not child.is_relative_to(run/'batches'):
+                raise LoopError('Model handoff is allowed only for an owned exploration child')
+            return dispatch(dict(request, run=str(child)))
     with lock(run / ".controller.lock"):
         controller.verify(run)
         state = read(run / "state.json")
@@ -77,6 +88,10 @@ def dispatch(request):
                 root = Path(config['knowledge_directory'])
                 references.update({'project-knowledge/' + name: base64.b64encode((root/name).read_bytes()).decode()
                                    for name in manifest(root) if not name.startswith('documents/')})
+            for index, directory in enumerate(config.get('own_feedback_directories', [])):
+                root = Path(directory)
+                references.update({'prior-batches/' + str(index) + '/' + name: base64.b64encode((root/name).read_bytes()).decode()
+                                   for name in manifest(root)})
             own = run / 'knowledge'
             if own.exists():
                 references.update({'own-feedback/' + name: base64.b64encode((own/name).read_bytes()).decode()
