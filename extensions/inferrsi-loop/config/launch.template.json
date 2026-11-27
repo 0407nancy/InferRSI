@@ -1,0 +1,19 @@
+{
+  "ssh": "<SSH_PROGRAM>",
+  "host": "<SSH_HOST_ALIAS>",
+  "expected_user": "<LINUX_USER>",
+  "expected_hostname": "<LINUX_HOSTNAME>",
+  "jump_hostname": null,
+  "ssh_guide": "<SSH_GUIDE>",
+  "container": "<CONTAINER>",
+  "remote_python": "<LOOP_PYTHON>",
+  "remote_package": "<REMOTE_LOOP_PACKAGE>",
+  "remote_runs": "<REMOTE_RUNS_DIRECTORY>",
+  "local_runs": "<LOCAL_RUNS_DIRECTORY>",
+  "codex": "<LOCAL_CODEX_PROGRAM>",
+  "model": "<MODEL_NAME>",
+  "effort": "medium",
+  "lark": "<LARK_PROGRAM>",
+  "lark_skill": "<LARK_DOC_SKILL>",
+  "document": "<REPORT_DOCUMENT_URL>"
+}

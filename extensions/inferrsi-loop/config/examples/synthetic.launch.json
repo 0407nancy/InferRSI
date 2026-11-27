@@ -1,0 +1,18 @@
+{
+  "ssh": "/tools/ssh-wrapper",
+  "host": "test-server",
+  "expected_user": "fixture-user",
+  "expected_hostname": "test-server.example",
+  "ssh_guide": "/docs/ssh.txt",
+  "container": "test-container",
+  "remote_python": "/env/bin/python",
+  "remote_package": "/workspace/inferrsi-loop",
+  "remote_runs": "/workspace/runs",
+  "local_runs": "/tmp/inferrsi-local-runs",
+  "codex": "/tools/codex",
+  "lark": "/tools/lark-cli",
+  "lark_skill": "/docs/lark/SKILL.md",
+  "document": "https://example.com/wiki/results",
+  "model": "fixture-model",
+  "effort": "medium"
+}

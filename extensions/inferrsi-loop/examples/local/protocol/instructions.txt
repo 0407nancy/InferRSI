@@ -1,0 +1,1 @@
+This is a protocol preparation scaffold, not a passing benchmark. Generate a local adapter for all changed symbols using the real checkpoint. Use the frozen measurement plan and numerical policy (existing applicable CI, otherwise exact_or_review). Never use random weights, E2E fallback or fabricated metrics.

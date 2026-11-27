@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inferrsi-loop"
+version = "0.1.0"
+description = "Codex-driven exploration with frozen InferRSI evaluations"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+inferrsi-loop = "inferrsi_loop.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+inferrsi_loop = ["data/*"]

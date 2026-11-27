@@ -1,3 +1,7 @@
+> **InferRSI loop v1** — 保留旧版外层探索与恢复流程。
+> 项目架构、配置模板、安装与 Codex prompt 示例见 [扩展 README](extensions/inferrsi-loop/README.md)。
+> 此分支用于个人 fork 中的版本留存；CPU 测试不代表 H3/P800 性能验收。
+
 <div align="center">
 
 ![InferRSI — an agent app to onboard and optimize models. The outer loop improves the engine and the inner loop improves the optimizer.](docs/assets/inferrsi-banner.svg)
@@ -191,3 +195,4 @@ python -m pip install -e ".[dev]"
 pytest
 ruff check src tests
 ```
+

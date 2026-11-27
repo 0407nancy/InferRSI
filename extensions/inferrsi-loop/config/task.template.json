@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "goal": "<OPTIMIZATION_GOAL>",
+  "model": {
+    "name": "<MODEL_NAME>",
+    "effort": "medium",
+    "transport": "local_ssh"
+  },
+  "project": {
+    "path": "<REMOTE_PROJECT>",
+    "include": [
+      "."
+    ],
+    "editable": [
+      "."
+    ]
+  },
+  "model_assets": {
+    "root": "<REMOTE_MODEL_WEIGHTS>"
+  },
+  "profile": {
+    "mode": "reuse",
+    "evidence": "<REMOTE_PROFILE_SUMMARY>"
+  },
+  "task": "explore",
+  "enable_full": false,
+  "human_review_required": true,
+  "exploration": {
+    "validation": "local_only",
+    "weights": "real_model_only",
+    "proposal_baseline": "original_frozen_source",
+    "missing_local_test": "prepare_on_local_codex"
+  },
+  "screen_routes": [],
+  "measurement_plan": {
+    "warmups": 2,
+    "measurements": 2
+  },
+  "protocols": {
+    "screen": {
+      "directory": "<REMOTE_LOOP_PACKAGE>/examples/local/protocol",
+      "instructions": "<REMOTE_LOOP_PACKAGE>/examples/local/protocol/instructions.txt",
+      "measure_command": [
+        "{python}",
+        "{protocol}/unprepared.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "quality_command": [
+        "{python}",
+        "{protocol}/unprepared.py",
+        "--project",
+        "{candidate}",
+        "--result",
+        "{result}"
+      ],
+      "quality_key": "numerical_ok",
+      "metric_key": "latency_ms",
+      "metric_unit": "ms",
+      "direction": "minimize",
+      "scope": "local_adapter_required",
+      "min_improvement_pct": 1,
+      "repetitions": 1,
+      "warmups": 0,
+      "timeout_seconds": 1800,
+      "final_reserve_seconds": 1,
+      "resources": {
+        "count": 2,
+        "allow": [
+          0,
+          1
+        ],
+        "exclude": [],
+        "lock_dir": "<REMOTE_LOCK_DIRECTORY>",
+        "wait_seconds": 0
+      }
+    }
+  },
+  "local_recovery": {
+    "enabled": true,
+    "max_protocol_versions": 4,
+    "max_evidence_rounds": 6,
+    "preflight_timeout_seconds": 240,
+    "evidence_roots": [
+      "<REMOTE_PROJECT>",
+      "<REMOTE_MODEL_WEIGHTS>",
+      "<REMOTE_REFERENCE_DIRECTORY>"
+    ]
+  },
+  "reference_directory": "<REMOTE_REFERENCE_DIRECTORY>",
+  "knowledge_query": "<MODEL_AND_OPTIMIZATION_TOPICS>",
+  "knowledge_sources": [
+    {
+      "id": "manual",
+      "kind": "lark",
+      "url": "<MANUAL_HISTORY_URL>",
+      "environment": "mixed",
+      "read_sheets": true
+    },
+    {
+      "id": "loop-records",
+      "kind": "lark",
+      "url": "<REPORT_DOCUMENT_URL>",
+      "environment": "mixed",
+      "read_sheets": true
+    },
+    {
+      "id": "experiments",
+      "kind": "directory",
+      "path": "<REMOTE_EXPERIMENT_ROOT>",
+      "environment": "current",
+      "required": true
+    },
+    {
+      "id": "legacy",
+      "kind": "directory",
+      "path": "<REMOTE_LEGACY_EXPERIMENT_ROOT>",
+      "environment": "historical",
+      "required": false
+    }
+  ],
+  "history_files": [],
+  "budget": {
+    "max_rounds": 3,
+    "max_seconds": 3600,
+    "max_infra_retries": 1,
+    "max_planner_retries": 1
+  },
+  "sync": {
+    "document": "<REPORT_DOCUMENT_URL>",
+    "automatic": false
+  },
+  "runtime": {
+    "inference_python": "<INFERENCE_PYTHON>"
+  }
+}
