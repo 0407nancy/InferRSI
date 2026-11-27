@@ -12,6 +12,8 @@ from .common import Busy, LoopError, copy_inputs, digest, lock, manifest, read, 
 def validate(config):
     from .configuration import filled
     filled(config)
+    from . import objective
+    objective.validate(config)
     project = config["project"]
     if not project.get("include"):
         raise LoopError("Declare project inputs and editable paths")
@@ -129,6 +131,7 @@ def initialize(config, run, *, document_snapshots=None):
              "started_at": time.time(), "deadline": time.time() + cfg["budget"]["max_seconds"],
              "history": [], "last_verdict": None, "last_stage": None, "reason": "initialized",
              "current_source": str(frozen / "baseline")}
+    state['deadline'] = min(state['deadline'], cfg['budget'].get('deadline', state['deadline']))
     state['overall_deadline'] = state['deadline']
     if cfg.get('task','explore') == 'explore' and cfg.get('workflow',{}).get('after_explore') == 'ablate':
         state['deadline'] -= cfg['workflow']['ablation_max_seconds']
@@ -185,6 +188,9 @@ def run_loop(run, *, resume=False):
         verify(run)
         config = read(run / "frozen/config.json")
         state = read(run / "state.json")
+        from . import objective
+        if objective.enabled(config):
+            return objective.advance(config, run, state)
         if state["status"] in ("accepted", "pending_review", "budget_exhausted", "screen_only_complete", "ablation_complete"):
             return read(run / "summary.json")
         if state["status"] == "blocked" and not resume:
@@ -208,6 +214,8 @@ def run_loop(run, *, resume=False):
                 save(run, config, state)
                 context = {"goal": config["goal"], "round": number, "profile": diagnosis,
                            "knowledge_enabled": knowledge.enabled(config),
+                           "objective_context": config.get("objective_context"),
+                           "prior_batch_experience": [knowledge.own_context(Path(p).parent, config["goal"]) for p in config.get("own_feedback_directories", [])],
                            "own_experience": knowledge.own_context(run, config['goal']),
                            "profile_excerpt": profiling.excerpt(diagnosis["evidence"]),
                            "reference_directory": config.get("reference_directory"),

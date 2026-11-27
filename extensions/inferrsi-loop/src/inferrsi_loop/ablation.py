@@ -200,7 +200,7 @@ def handoff(config, run, state):
         factors = [x['name'] for x in accepted]
         variants = [{'name':'all','source':str(merged),'enabled':factors}]
         pairs = [{'reference':'baseline','candidate':'all'}]
-        if len(factors) > 1:
+        if len(factors) > 1 and not workflow.get('combination_only', False):
             for omitted in factors:
                 if any(omitted in x['requires'] for x in accepted):
                     exclusions.append({'factor':omitted,'reason':'removal_would_break_dependency'})
@@ -223,7 +223,7 @@ def handoff(config, run, state):
     cfg = copy.deepcopy(config)
     cfg.update(task='ablate',profile={'mode':'skip'},ablation=plan,workflow={'after_explore':'stop'},
                history_files=[],knowledge_sources=[],replay_candidates=[])
-    cfg['budget'].update(max_rounds=len(plan['comparisons']),max_seconds=remaining)
+    cfg['budget'].update(max_rounds=len(plan['comparisons']),max_seconds=remaining,deadline=state['overall_deadline'])
     cfg['project']['path'] = str(baseline)
     initialize(cfg,child)
     return run_loop(child,resume=True)

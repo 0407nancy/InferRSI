@@ -95,6 +95,7 @@ raise SystemExit(status)
                 continue
             if result["status"] not in ("awaiting_local_proposal", "awaiting_local_test"):
                 return
+            execution_root = a.root / "batches" / Path(result["active_run"]).name if result.get("active_run") else a.root
             checks = adapter.doctor(settings, a.root / "adapter")
             if not checks["ready"]:
                 raise LoopError("The local Codex CLI is not ready")
@@ -105,7 +106,7 @@ raise SystemExit(status)
                 settings['timeout_seconds'] = min(900, max(1, plan['deadline'] - time.time()))
                 version = plan['request'].get('protocol_state', {}).get('version', 1)
                 supplement = plan['request'].get('supplement_count', 0)
-                folder = a.root / 'rounds' / str(plan['request']['round']) / f'local-test-v{version:02d}-e{supplement:02d}'
+                folder = execution_root / 'rounds' / str(plan['request']['round']) / f'local-test-v{version:02d}-e{supplement:02d}'
                 archive_incomplete(folder, "prepared.json")
                 prepared = local_tests.prepare(settings, plan, folder)
                 if prepared.get('ready') is False:
@@ -132,7 +133,7 @@ raise SystemExit(status)
             plan = remote("plan")
             if (plan["model"]["name"], plan["model"].get("effort", "medium")) != (a.model, a.effort):
                 raise LoopError("Local and frozen remote model selections differ")
-            folder = a.root / "rounds" / str(plan["round"])
+            folder = execution_root / "rounds" / str(plan["round"])
             folder.mkdir(parents=True, exist_ok=True)
             generation = plan["context"]["profile"].get("generation", 0)
             folder = folder if generation == 0 else folder / ("profile-" + str(generation))
