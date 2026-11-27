@@ -1,0 +1,3 @@
+CPU integration fixture only. Optimize the integer histogram without changing semantics or mutating the input.
+The frozen quality script checks exact outputs; measurements have two warmups and three measured samples.
+This fixture validates the Agent/InferRSI integration, not H3, video quality, or accelerator performance.

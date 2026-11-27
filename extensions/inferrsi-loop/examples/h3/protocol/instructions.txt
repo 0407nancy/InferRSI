@@ -1,0 +1,7 @@
+Keep the official starship/dinner inputs, model weights, seed, BF16, TP2, and all CI thresholds unchanged.
+Exploration uses only the matching local module test, real model weights and fixed paired inputs. Never generate random weights.
+A candidate requires the declared local gain criterion and a numerical comparison against the reference. Structural/finite checks alone are insufficient.
+Reuse applicable module CI rules. Without an applicable rule, exact output may pass; nonzero error is pending numerical review, not an automatic failure or pass. Never invent a universal BF16 tolerance or relax gates after seeing a result.
+Missing module coverage requires a new frozen local adapter. Never fall back to short or official E2E during exploration.
+Ablation measures fixed candidate combinations with short-request E2E. Local and short gains do not establish official-request quality or performance.
+Performance warmups/repetitions come from the frozen task config. Retain raw errors, all timing samples, weight/input provenance and source fingerprints.
